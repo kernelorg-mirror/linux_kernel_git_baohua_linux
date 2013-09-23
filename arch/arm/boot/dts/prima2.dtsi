@@ -325,6 +325,8 @@
 				reg = <0xb00e0000 0x10000>;
 				interrupts = <24>;
 				clocks = <&clks 17>;
+				#address-cells = <1>;
+				#size-cells = <0>;
 			};
 
 			i2c1: i2c@b00f0000 {
@@ -333,6 +335,8 @@
 				reg = <0xb00f0000 0x10000>;
 				interrupts = <25>;
 				clocks = <&clks 18>;
+				#address-cells = <1>;
+				#size-cells = <0>;
 			};
 
 			tsc@b0110000 {
