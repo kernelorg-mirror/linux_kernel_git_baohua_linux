@@ -219,7 +219,7 @@ static void __folio_batch_add_and_move(struct folio_batch __percpu *fbatch,
 	else
 		local_lock(&cpu_fbatches.lock);
 
-	if (!folio_batch_add(this_cpu_ptr(fbatch), folio) ||
+	if (!folio_add_lru_cache(this_cpu_ptr(fbatch), folio) ||
 			!folio_may_be_lru_cached(folio) || lru_cache_disabled())
 		folio_batch_move_lru(this_cpu_ptr(fbatch), move_fn);
 
@@ -981,6 +981,9 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 	int i, j;
 	struct lruvec *lruvec = NULL;
 	unsigned long flags = 0;
+	unsigned long nr_pages = 0;
+	/* Only lru_cache tracks pages; others keep nr_pages at 0 */
+	bool lru_cache = !!folios->nr_pages;
 
 	for (i = 0, j = 0; i < folios->nr; i++) {
 		struct folio *folio = folios->folios[i];
@@ -1020,6 +1023,8 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 
 		if (j != i)
 			folios->folios[j] = folio;
+		if (lru_cache)
+			nr_pages += folio_nr_pages(folio);
 		j++;
 	}
 	if (lruvec)
@@ -1030,6 +1035,9 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 	}
 
 	folios->nr = j;
+	if (lru_cache)
+		folios->nr_pages = min_t(unsigned long, nr_pages,
+					 FOLIO_BATCH_SIZE + 1);
 	mem_cgroup_uncharge_folios(folios);
 	free_unref_folios(folios);
 }
