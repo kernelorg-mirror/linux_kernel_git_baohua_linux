@@ -5020,17 +5020,6 @@ static int get_tier_idx(struct lruvec *lruvec, int type)
 	return tier - 1;
 }
 
-static inline bool lru_gen_trim_cache(struct lruvec *lruvec)
-{
-	unsigned long inactive_file = lruvec_page_state(lruvec, NR_INACTIVE_FILE);
-	unsigned long active_file = lruvec_page_state(lruvec, NR_ACTIVE_FILE);
-	unsigned long file = inactive_file + active_file;
-	unsigned long anon = lruvec_page_state(lruvec, NR_INACTIVE_ANON) +
-			     lruvec_page_state(lruvec, NR_ACTIVE_ANON);
-
-	return inactive_file > active_file && file > MAX_NR_GENS * anon;
-}
-
 /*
  * Balance the anon vs file scan budget using MGLRU's per-type refault
  * rates, where swappiness is the relative IO cost of anon vs file (see
@@ -5063,6 +5052,7 @@ static void lru_gen_balance_scan(struct lruvec *lruvec, struct scan_control *sc,
 	u64 refault_rate[ANON_AND_FILE], anon_factor, file_factor;
 	u64 anon_scan, file_scan, total;
 	u64 anon_weight, file_weight;
+	u64 anon_budget, file_budget;
 	int size_bias;
 
 	total = nr[LRU_GEN_ANON] + nr[LRU_GEN_FILE];
@@ -5118,8 +5108,7 @@ static void lru_gen_balance_scan(struct lruvec *lruvec, struct scan_control *sc,
 	else
 		anon_factor = (u64)swappiness * refault_rate[LRU_GEN_FILE] * anon_weight;
 
-	if (swappiness == MAX_SWAPPINESS &&
-	    sc->priority < (DEF_PRIORITY / 2 + lru_gen_trim_cache(lruvec)))
+	if (swappiness == MAX_SWAPPINESS && sc->priority < DEF_PRIORITY / 2)
 		file_factor = refault_rate[LRU_GEN_ANON] * file_weight;
 	else
 		file_factor = (u64)(MAX_SWAPPINESS - swappiness) *
@@ -5134,16 +5123,14 @@ static void lru_gen_balance_scan(struct lruvec *lruvec, struct scan_control *sc,
 	 * the other type. Any excess left when total_scan exceeds both sizes
 	 * is dropped, since it only stresses the scanner with no gain.
 	 */
-	if (anon_scan > nr[LRU_GEN_ANON]) {
-		file_scan += anon_scan - nr[LRU_GEN_ANON];
-		anon_scan = nr[LRU_GEN_ANON];
-	}
-	if (file_scan > nr[LRU_GEN_FILE]) {
-		anon_scan += file_scan - nr[LRU_GEN_FILE];
-		file_scan = nr[LRU_GEN_FILE];
-	}
-	nr[LRU_GEN_ANON] = min_t(u64, anon_scan, nr[LRU_GEN_ANON]);
-	nr[LRU_GEN_FILE] = min_t(u64, file_scan, nr[LRU_GEN_FILE]);
+	anon_budget = nr[LRU_GEN_ANON] - nr[LRU_GEN_ANON] / 4;
+	file_budget = nr[LRU_GEN_FILE] - nr[LRU_GEN_FILE] / 4;
+	if (anon_scan > anon_budget)
+		file_scan += anon_scan - anon_budget;
+	if (file_scan > file_budget)
+		anon_scan += file_scan - file_budget;
+	nr[LRU_GEN_ANON] = min_t(u64, anon_scan, anon_budget);
+	nr[LRU_GEN_FILE] = min_t(u64, file_scan, file_budget);
 }
 
 static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
